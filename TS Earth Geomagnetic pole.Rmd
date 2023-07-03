@@ -1,0 +1,654 @@
+---
+title: "sta457 final project"
+output: pdf_document
+date: '2023-03-25'
+---
+
+```{r,echo=FALSE,message=FALSE}
+setwd("~/Desktop")
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(tseries)
+library(forecast)
+library(TSA)
+library(knitr)
+library(kableExtra)
+library(fUnitRoots)
+library(timeSeries)
+library(astsa)
+library(zoo)
+library(MASS)
+library(fracdiff)
+
+my_data <- read_excel("Geomagnetic_Intensity_Data.xlsx")
+``` 
+ 
+
+```{r,echo=FALSE,message=FALSE,out.width="49%",out.height="49%",fig.show='hold',fig.align='center'}
+# train_data: training set (95% of the data)
+# test_data: test set (10% of the data)
+
+
+train_data <- head(my_data, round(nrow(my_data) * 0.97))
+h <- nrow(my_data) - nrow(train_data)
+test_data <- tail(my_data, h)
+
+train_data_north <- my_data[69:424, ]
+test_data_north <- my_data[425:434, ]
+whole_data_north <- my_data[69:434,]
+
+```
+
+```{r}
+north <- train_data$North_Geomagnetic_Pole
+cummeannorth <- cumsum(north)/seq_along(north)
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+plot(north, type = 'l', xlab = "Time", ylab = "Time Series x")
+plot(cummeannorth, type = "l", xlab = "Time", ylab = "Mean Level")
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+acf(north, xlab = "lag", ylab = "Sample ACF", main = "")
+acf(north, type = "partial", xlab = "lag", ylab = "Sample PACF", main= "")
+
+south <-train_data$South_Geomagnetic_Pole
+cummeansouth <- cumsum(south)/seq_along(south)
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+plot(south, type = 'l', xlab = "Time", ylab = "Time Series x")
+plot(cummeansouth, type = "l", xlab = "Time", ylab = "Mean Level")
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+acf(south, xlab = "lag", ylab = "Sample ACF", main = "")
+acf(south, type = "partial", xlab = "lag", ylab = "Sample PACF", main= "")
+
+par(mfrow=2:1)
+tsplot(cbind(north,south), spaghetti = TRUE, col = astsa.col(c(2,4), 0.5), lwd = 2, type = "l", pch=20, ylab= "geomagnetic intensities", main = "Geomagnetic intensity overtime")
+legend("topright", col=c(2,4), lty = 1, lwd = 2, pch =20, bg="white", legend = c("North Geomagnetic Pole", "South Geomagnetic Pole"))
+
+
+```
+
+
+`
+
+```{r}
+#non stationary random walk use previous point to forecast
+or_n <- train_data$North_Geomagnetic_Pole
+summary(mod.ar <- lm(or_n[2:421] ~ or_n[1:420]))
+#xt = x_{t-1} + w_t
+plot.ts(train_data_north$North_Geomagnetic_Pole)
+### 
+```
+
+```{r}
+
+ts_data_n <- ts(train_data_north$North_Geomagnetic_Pole, start = c(1658, 1), frequency = 10)
+
+ts_decomposed_n <- stl(ts_data_n, s.window = "periodic")
+
+plot(ts_decomposed_n)
+
+ts_adj_n <- seasadj(ts_decomposed_n)
+
+plot(ts_adj_n, main = "Geomagnetic pole data without seasonal component", ylab = "Value")
+
+plot(decompose(ts_data_n))
+```
+
+```{r,echo=FALSE,message=FALSE,out.width="49%",out.height="49%",fig.show='hold',fig.align='center'}
+n_n <- length(train_data_north$North_Geomagnetic_Pole)
+time_index_n <- 1:n_n
+regression_n <- lm(train_data_north$North_Geomagnetic_Pole ~ time_index_n)
+detrend_north <- train_data_north$North_Geomagnetic_Pole - predict(regression_n)
+
+
+time_index_n2 <- 1:length(detrend_north)
+regression_n2 <- lm(detrend_north ~ time_index_n2)
+detrend_north2 <- detrend_north - predict(regression_n2)
+
+xn <- diff(diff(detrend_north))
+cummeanxn <- cumsum(xn)/seq_along(xn)
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+plot.ts(xn,type = 'l', xlab = "Time", ylab = "Time Series x")
+plot(cummeanxn, type = "l", xlab = "Time", ylab = "Mean Level")
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+acf(xn, xlab = "lag", ylab = "Sample ACF", main = "")
+acf(xn, type = "partial", xlab = "lag", ylab = "Sample PACF", main= "")
+```
+
+
+
+```{r,echo=FALSE,message=FALSE, warning = FALSE}
+# Model Specification NORTH
+# Perform ADF test with no constant (nc)
+adf_nc_n <- adfTest(xn, type = "nc",lags = 13)
+
+# Perform ADF test with constant only (c)
+adf_c_n <- adfTest(xn, type = "c", lags = 13)
+
+# Perform ADF test with constant and trend (ct)
+adf_ct_n <- adfTest(xn, type = "ct", lags = 13)
+
+# Print the results
+adf_nc_n
+adf_c_n
+adf_ct_n
+
+x.kpss_level_n <- kpss.test(xn, null = "Level")
+x.kpss_trend_n <- kpss.test(xn, null = "Trend")
+x.kpss_level_n
+x.kpss_trend_n
+
+
+
+xn.eacf <- eacf(xn, ar.max = 5, ma.max = 5)
+```
+
+
+
+
+
+```{r,echo=FALSE,message=FALSE}
+
+xn.aic = matrix(0,5,5,)
+xn.bic = matrix(0,5,5)
+
+for (i in 0:4) for (j in 0:4){
+  xn.fit <- Arima(xn,order=c(i,0,j), method = "ML",include.mean = TRUE)
+  xn.aic[i+1, j+1] <- xn.fit$aic
+  xn.bic[i+1,j+1] <- BIC(xn.fit)
+}
+```
+
+
+```{r,echo=FALSE,message=FALSE}
+xn.aic.sort <- sort(xn.aic)
+indices1 <- arrayInd(order(xn.aic), dim(xn.aic))
+aic1.df <- data.frame(row = indices1[,1], col = indices1[,2] , value = xn.aic.sort)
+aic1.v <- kable(aic1.df, row.names = FALSE, col.names = c("AR", "MA", "Value")) %>%
+    kable_styling()
+aic1.v
+```
+
+```{r,echo=FALSE,message=FALSE}
+xn.bic.sort <- sort(xn.bic)
+indices11 <- arrayInd(order(xn.bic), dim(xn.bic))
+bic1.df <- data.frame(row = indices11[,1], col = indices11[,2] , value = xn.bic.sort)
+bic1.v <- kable(bic1.df, row.names = FALSE, col.names = c("AR", "MA", "Value")) %>%
+    kable_styling()
+bic1.v
+```
+
+```{r,echo=FALSE,message=FALSE,out.width="49%",out.height="49%",fig.show='hold',fig.align='center'}
+x.fit_n = Arima(xn, order = c(4,0,5) , method = "ML", include.mean = TRUE)
+###########################################
+##tsdia()with my own dof
+residuals_arima <- residuals(x.fit_n)
+acf_resid_n <- acf(residuals_arima, plot = FALSE)
+
+
+plot(acf_resid_n, main = "ACF of Residuals with Custom Confidence Interval")
+
+
+alpha <- 0.05  # 95% confidence interval (change alpha for other confidence levels)
+dof <- 389-(10)  # Your desired degrees of freedom
+critical_value <- qnorm(1 - alpha / 2) / sqrt(dof)
+
+
+abline(h = c(-critical_value, critical_value), col = "blue", lwd = 2, lty = "dashed")
+
+
+###########################################
+#tsdiag(x.fit_n)
+qqnorm(residuals(x.fit_n))
+qqline(residuals(x.fit_n))
+
+shapiro.test(residuals(x.fit_n))
+hist(x.fit_n$residuals)
+acf(x.fit_n$residuals)
+pacf(x.fit_n$residuals)
+
+```
+
+```{r}
+ar_param_n <- x.fit_n$coef[grepl("^ar", names(x.fit_n$coef))]
+ma_param_n <- x.fit_n$coef[grepl("^ma", names(x.fit_n$coef))]
+intercept_param_n <- x.fit_n$coef["intercept"]
+
+ar_param_n
+ma_param_n
+intercept_param_n
+
+
+residuals_north <- residuals(x.fit_n)
+ljung_box_test_n <- Box.test(residuals_north, lag = 13, type = "Ljung-Box")
+
+print(ljung_box_test_n)
+```
+
+```{r}
+#PREDICTION NORTH
+x <- xn
+forecast_arima_4_0_5 <- function(x, ar_coefs, ma_coefs, n_ahead) {
+  n <- length(x)
+  last_non_na <- max(which(!is.na(residuals_north)))
+  errors <- residuals_north[(last_non_na - 4):last_non_na]
+  
+  forecast <- numeric(n_ahead)
+  for (i in 1:n_ahead) {
+    new_data <- c(x, forecast[1:(i - 1)])
+    data <- new_data[(n - 3):(n + i - 1)]
+
+    forecast[i] <- sum(ar_coefs * data[1:4]) + sum(ma_coefs * errors)
+    errors <- c(errors[-1], -forecast[i])
+  }
+  
+  return(forecast)
+}
+
+ar_coefs <- c(0.4928, -0.1480, 0.0967, 0.1441)
+ma_coefs <- c(-0.2569, 0.0884, -0.0825, -0.2356, 0.3345)
+
+n_ahead <- 10
+forecast_n <- forecast_arima_4_0_5(x, ar_coefs, ma_coefs, n_ahead)
+#forecast_n
+xn_predictions <- predict(x.fit_n, 10)
+forecast_n <- xn_predictions$pred
+#####################################################################
+
+x_n <- train_data_north$North_Geomagnetic_Pole
+
+detrended_series_n <- residuals(lm(x_n ~ time(x_n)))
+d1_series_n <- diff(detrended_series_n)
+d2_series_n <- diff(d1_series_n)
+
+rev_d2_forecasts_n <- cumsum(c(d1_series_n[length(d1_series_n)], forecast_n[-1]))
+
+rev_d1_forecasts_n <- cumsum(c(detrended_series_n[length(detrended_series_n)], rev_d2_forecasts_n[1:(length(rev_d2_forecasts_n) - 1)]))
+
+forecast_dates_n <- seq(max(time(x_n)) + 1/length(x_n), length = length(rev_d1_forecasts_n), by = 1/length(x_n))
+forecast_trend_n <- coef(lm(x_n ~ time(x_n)))[1] + forecast_dates_n * coef(lm(x_n ~ time(x_n)))[2]
+final_forecast_n <- rev_d1_forecasts_n + forecast_trend_n
+final_forecast_n
+
+#xn_predictions <- predict(x.fit_n, n.ahead = 10)
+#point_forecasts_n <- xn_predictions$pred
+#se <- xn_predictions$se
+#alpha <- 0.05
+#z <- qnorm(1 - alpha / 2)
+#lower_bound_n <- final_forecast_n - z * se
+#upper_bound_n <- final_forecast_n + z * se
+#forecast_data_df_bounds_n <- data.frame(Date = time(forecast_tn),
+                                      #Lower = lower_bound_n,
+                                    # Upper = upper_bound_n)
+accuracy(final_forecast_n, test_data_north$North_Geomagnetic_Pole)
+```
+
+```{r}
+
+forecast_ts_n <- ts(final_forecast_n[-1], start = end(x_n) + 1/length(x_n), frequency = frequency(x_n))
+
+original_data_df_n <- data.frame(Date = time(x_n), Value = as.vector(x_n))
+forecast_data_df_n <- data.frame(Date = time(forecast_ts_n), Value = as.vector(forecast_ts_n))
+
+test_data_ts_n <- ts(test_data_north$North_Geomagnetic_Pole, start = end(train_data_north$North_Geomagnetic_Pole) + 1/length(train_data_north$North_Geomagnetic_Pole), frequency = frequency(train_data_north$North_Geomagnetic_Pole))
+
+test_data_df_n <- data.frame(Date = time(test_data_ts_n), Value = as.vector(test_data_ts_n))
+
+p_n <- ggplot() +
+  geom_line(data = original_data_df_n, aes(x = Date, y = Value), color = "black") +
+  geom_line(data = forecast_data_df_n, aes(x = Date, y = Value), color = "red") +
+  geom_line(data = test_data_df_n, aes(x = Date, y = Value), color = "blue") +
+  theme_minimal() +
+  labs(title = "ARIMA Forecast (North Geomagnetic Pole)", x = "Time", y = "Value") +
+  scale_x_continuous(breaks = pretty(original_data_df_n$Date, n = 10)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_n
+
+
+```
+
+```{r}
+n_full_n <- length(whole_data_north$North_Geomagnetic_Pole)
+time_index_full_n <- 1:n_full_n
+regression_full_n <- lm(whole_data_north$North_Geomagnetic_Pole ~ time_index_full_n)
+detrend_north_full <- whole_data_north$North_Geomagnetic_Pole - predict(regression_full_n)
+x_n_full <- diff(diff((detrend_north_full)))
+
+x.fit_n_full <- Arima(x_n_full, order = c(4, 0, 5), method = "ML", include.mean = TRUE)
+
+n_steps_ahead_n <- 10
+x_n_predictions_full <- predict(x.fit_n_full, n.ahead = n_steps_ahead_n)
+point_forecasts_n_full <- x_n_predictions_full$pred
+
+
+rev_d2n_full <- cumsum(c(d1_series_n[length(d1_series_n)], point_forecasts_n_full))
+
+rev_d1n_full <- cumsum(c(detrended_series_n[length(detrended_series_n)], rev_d2n_full[-1]))
+
+forecast_dates_n_full <- seq(max(time(whole_data_north$North_Geomagnetic_Pole)) + 1/length(whole_data_north$North_Geomagnetic_Pole), length = length(rev_d1n_full), by = 1/length(whole_data_north$North_Geomagnetic_Pole))
+
+detrend_n1 <- coef(lm(whole_data_north$North_Geomagnetic_Pole ~ time(whole_data_north$North_Geomagnetic_Pole)))[1]
+
+detrend_n2 <- coef(lm(whole_data_north$North_Geomagnetic_Pole ~ time(whole_data_north$North_Geomagnetic_Pole)))[2]
+
+forecast_trend_n_full <- detrend_n1  + forecast_dates_n_full * detrend_n2
+
+
+final_forecasts_n_full <- rev_d1n_full + forecast_trend_n_full
+
+forecast_ts_n_full <- ts(final_forecasts_n_full, start = end(whole_data_north$North_Geomagnetic_Pole) + 1/length(whole_data_north$North_Geomagnetic_Pole), frequency = frequency(whole_data_north$North_Geomagnetic_Pole))
+
+forecast_data_df_n_full <- data.frame(Date = time(forecast_ts_n_full), Value = as.vector(forecast_ts_n_full))
+
+year_label_north <- function(x) {
+  return(x + 1658)
+}
+
+p_n_full <- ggplot() +
+  geom_line(data = original_data_df_n, aes(x = Date, y = Value), color = "black") +
+  geom_line(data = forecast_data_df_n, aes(x = Date, y = Value), color = "red") +
+  geom_line(data = test_data_df_n, aes(x = Date, y = Value), color = "blue") +
+  geom_line(data = forecast_data_df_n_full, aes(x = Date, y = Value), color = "purple") +
+  theme_minimal() +
+  labs(title = "North Geomagnetic intensities Forecast", x = "Time", y = "magnetic intensities") +
+  scale_x_continuous(labels = year_label_north,
+                     breaks = seq(0, 2033 - 1658, by = 15),  
+                     limits = c(0, 2033 - 1658)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_n_full
+
+```
+
+
+
+
+############################################################################### SOUTH 
+
+```{r}
+
+
+ts_data_s <- ts(train_data$South_Geomagnetic_Pole, start = c(1590, 1), frequency =10 )
+#ts_data_s <- ts(xs, start = c(1590, 1), frequency = 10)
+start_date <- start(ts_data_s)
+end_date <- end(ts_data_s)
+
+plot(decompose(ts_data_s))
+```
+
+
+
+```{r,echo=FALSE,message=FALSE,out.width="49%",out.height="49%",fig.show='hold',fig.align='center'}
+
+n <- length(train_data$South_Geomagnetic_Pole)
+time_index <- 1:n
+regression <- lm(train_data$South_Geomagnetic_Pole ~ time_index)
+detrend_south <- train_data$South_Geomagnetic_Pole - predict(regression)
+#ts(detrend_south)
+xs <- diff(diff((detrend_south)))
+
+###################################################################################
+cummeanxs <- cumsum(xs)/seq_along(xs)
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+plot.ts(xs,type = 'l', xlab = "Time", ylab = "Time Series x")
+plot(cummeanxs, type = "l", xlab = "Time", ylab = "Mean Level")
+par(mfrow = c(2,1), mar = c(4,4,4,4))
+acf(xs, xlab = "lag", ylab = "Sample ACF", main = "") #can add  xlim =c(1,25)
+acf(xs, type = "partial", xlab = "lag", ylab = "Sample PACF", main= "")
+```
+
+
+
+```{r,echo=FALSE,message=FALSE, warning = FALSE}
+# Model Specification SOUTH
+# Perform ADF test with no constant (nc)
+adf_nc_s <- adfTest(xs, type = "nc", lags = 13)
+
+# Perform ADF test with constant only (c)
+adf_c_s <- adfTest(xs, type = "c", lags = 13)
+
+# Perform ADF test with constant and trend (ct)
+adf_ct_s <- adfTest(xs, type = "ct", lags = 13)
+
+# Print the results
+adf_nc_s
+adf_c_s
+adf_ct_s
+
+x.kpss_level_s <- kpss.test(xs, null = "Level")
+x.kpss_trend_s <- kpss.test(xs, null = "Trend")
+x.kpss_level_s
+x.kpss_trend_s
+
+xs.eacf <- eacf(xs, ar.max = 5, ma.max = 5)
+```
+
+```{r,echo=FALSE,message=FALSE}
+
+xs.aic = matrix(0,5,5)
+xs.bic = matrix(0,5,5)
+
+#### check
+for (i in 0:4) for (j in 0:4){
+  xs.fit <- Arima(xs,order=c(i,0,j), method = "ML", include.mean = TRUE)
+  xs.aic[i+1, j+1] <- xs.fit$aic
+  xs.bic[i+1,j+1] <- BIC(xs.fit)
+}
+```
+
+```{r,echo=FALSE,message=FALSE}
+xs.aic.sort <- sort(xs.aic)
+indices2 <- arrayInd(order(xs.aic), dim(xs.aic))
+aic2.df <- data.frame(row = indices2[,1], col = indices2[,2] , value = xs.aic.sort)
+aic2.v <- kable(aic2.df, row.names = FALSE, col.names = c("AR", "MA", "Value")) %>%
+    kable_styling()
+aic2.v
+```
+
+```{r,echo=FALSE,message=FALSE}
+xs.bic.sort <- sort(xs.bic)
+indices22 <- arrayInd(order(xs.bic), dim(xs.bic))
+bic2.df <- data.frame(row = indices22[,1], col = indices22[,2] , value = xs.bic.sort)
+bic2.v <- kable(bic2.df, row.names = FALSE, col.names = c("AR", "MA", "Value")) %>%
+    kable_styling()
+bic2.v
+```
+
+
+```{r,echo=FALSE,message=FALSE,out.width="49%",out.height="49%",fig.show='hold',fig.align='center'}
+x.fit_s = Arima(xs, order = c(5,0,5), method = "ML", include.mean = TRUE)
+###########################################
+##tsdia()with my own dof
+residuals_arima <- residuals(x.fit_s)
+acf_resid <- acf(residuals_arima, plot = FALSE)
+
+# Plot the ACF
+plot(acf_resid, main = "ACF of Residuals with Custom Confidence Interval")
+
+# Calculate the custom confidence interval
+alpha <- 0.05  # 95% confidence interval (change alpha for other confidence levels)
+dof <- 389-(3+2)  # Your desired degrees of freedom
+critical_value <- qnorm(1 - alpha / 2) / sqrt(dof)
+
+# Add the custom confidence interval lines
+abline(h = c(-critical_value, critical_value), col = "blue", lwd = 2, lty = "dashed")
+
+
+###########################################
+#tsdiag(x.fit_s)
+qqnorm(residuals(x.fit_s))
+qqline(residuals(x.fit_s))
+
+shapiro.test(residuals(x.fit_s))
+
+
+acf(x.fit_s$residuals)
+pacf(x.fit_s$residuals)
+```
+
+```{r}
+ar_param_s <- x.fit_s$coef[grepl("^ar", names(x.fit_s$coef))]
+ma_param_s <- x.fit_s$coef[grepl("^ma", names(x.fit_s$coef))]
+intercept_param_s <- x.fit_s$coef["intercept"]
+
+cat("AR Parameters (MLEs):\n")
+print(ar_param_s)
+cat("\nMA Parameters (MLEs):\n")
+print(ma_param_s)
+cat("\nIntercept Parameter (MLE):\n")
+print(intercept_param_s)
+
+residuals_south <- residuals(x.fit_s)
+# Perform the test
+ljung_box_test_s <- Box.test(residuals_south, lag = 13, type = "Ljung-Box")
+
+# Print the test results
+print(ljung_box_test_s)
+
+```
+
+```{r}
+####SOUTH 
+n_steps <- 13
+xs_predictions <- predict(x.fit_s, n.ahead = n_steps)
+#point_forecasts_s <- xs_predictions$pred
+point_forecasts_s <- forecasts
+point_forecasts_ss <- final_forecasts
+se <- xs_predictions$se
+alpha <- 0.05
+z <- qnorm(1 - alpha / 2)
+#lower_bounds <- point_forecasts_ss - z * se
+#upper_bounds <- point_forecasts_ss + z * se
+#forecast_data_df_bounds <- data.frame(Date = time(forecast_ts),
+                                     # Lower = lower_bounds,
+                                     # Upper = upper_bounds)
+
+
+xss <- train_data$South_Geomagnetic_Pole
+xs_ts <- ts(xss, start = 1, frequency = 1)
+
+detrended_series <- residuals(lm(xss ~ time(xss)))
+d1_series <- diff(detrended_series)
+d2_series <- diff(d1_series)
+
+rev_d2_forecasts <- cumsum(c(d1_series[length(d1_series)], point_forecasts_s))
+
+rev_d1_forecasts <- cumsum(c(detrended_series[length(detrended_series)], rev_d2_forecasts[-1]))
+
+forecast_dates <- seq(max(time(xss)) + 1/length(xss), length = length(rev_d1_forecasts), by = 1/length(xss))
+forecast_trend <- coef(lm(xss ~ time(xss)))[1] + forecast_dates * coef(lm(xss ~ time(xss)))[2]
+final_forecasts <- rev_d1_forecasts + forecast_trend
+
+forecast_ts <- ts(final_forecasts[-1], start = end(xss) + 1/length(xss), frequency = frequency(xss))
+
+original_data_df_s <- data.frame(Date = time(xs_ts), Value = as.vector(xs_ts))
+forecast_data_df_s <- data.frame(Date = time(forecast_ts), Value = as.vector(forecast_ts))
+
+test_data_ts <- ts(test_data$South_Geomagnetic_Pole, start = end(train_data$South_Geomagnetic_Pole) + 1/length(train_data$South_Geomagnetic_Pole), frequency = frequency(train_data$South_Geomagnetic_Pole))
+
+test_data_df_s <- data.frame(Date = time(test_data_ts), Value = as.vector(test_data_ts))
+
+p_s <- ggplot() +
+  geom_line(data = original_data_df_s, aes(x = Date, y = Value), color = "black") +
+  geom_line(data = forecast_data_df_s, aes(x = Date, y = Value), color = "red") +
+  geom_line(data = test_data_df_s, aes(x = Date, y = Value), color = "blue") +
+  theme_minimal() +
+  labs(title = "ARIMA Forecast", x = "Time", y = "Value") +
+  scale_x_continuous(breaks = pretty(original_data_df$Date, n = 10)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_s
+
+accuracy(final_forecasts, test_data$South_Geomagnetic_Pole)
+        
+```
+
+
+
+```{r}
+###### PREDICTION SOUTH 
+ar_coefs <- c(-0.1819, 0.0337, 0.0847, 0.0204, -0.6777)
+ma_coefs <- c(0.6819, 0.3315, 0.1206, 0.1558, 0.3929)
+intercept <- 0.0416
+
+forecast_arima_5_0_5 <- function(data, ar_coefs, ma_coefs, intercept, errors) {
+  ar_term <- sum(ar_coefs * data[(length(data)-4):(length(data))])
+  ma_term <- sum(ma_coefs * errors)
+  return (ar_term + ma_term + intercept)
+}
+
+n <- length(xs)
+h <- 13 # Number of steps ahead you want to forecast
+forecasts <- numeric(h)
+forecasts_diff <- numeric(h)
+forecasts_cum_diff <- numeric(h)
+
+data <- xs
+errors <- c(rep(0, 5))
+
+for (i in 1:h) {
+  forecasts[i] <- forecast_arima_5_0_5(data, ar_coefs, ma_coefs, intercept, errors)
+  data <- c(data, forecasts[i])
+  errors <- c(errors[-1], forecasts[i] - data[length(data) - 1])
+}
+
+forecasts
+
+
+```
+
+
+
+######################################################################################
+
+TESTING 
+
+
+```{r}
+south_full <- my_data$South_Geomagnetic_Pole
+n_full <- length(south_full)
+time_index_full <- 1:n_full
+regression_full <- lm(south_full ~ time_index_full)
+detrend_south_full <- south_full - predict(regression_full)
+xs_full <- diff(diff((detrend_south_full)))
+
+x.fit_s_full <- Arima(xs_full, order = c(5, 0, 5), method = "ML", include.mean = TRUE)
+
+n_steps_ahead <- 10
+xs_predictions_full <- predict(x.fit_s_full, n.ahead = n_steps_ahead)
+point_forecasts_s_full <- xs_predictions_full$pred
+
+rev_d2_forecasts_full <- cumsum(c(d1_series[length(d1_series)], point_forecasts_s_full))
+
+rev_d1_forecasts_full <- cumsum(c(detrended_series[length(detrended_series)], rev_d2_forecasts_full[-1]))
+
+forecast_dates_full <- seq(max(time(south_full)) + 1/length(south_full), length = length(rev_d1_forecasts_full), by = 1/length(south_full))
+forecast_trend_full <- coef(lm(south_full ~ time(south_full)))[1] + forecast_dates_full * coef(lm(south_full ~ time(south_full)))[2]
+final_forecasts_full <- rev_d1_forecasts_full + forecast_trend_full
+
+forecast_ts_full <- ts(final_forecasts_full, start = end(south_full) + 1/length(south_full), frequency = frequency(south_full))
+
+forecast_data_df_s_full <- data.frame(Date = time(forecast_ts_full), Value = as.vector(forecast_ts_full))
+
+year_label <- function(x) {
+  return(x + 1590)
+}
+
+p_s_full <- ggplot() +
+  geom_line(data = original_data_df_s, aes(x = Date, y = Value), color = "black") +
+  geom_line(data = forecast_data_df_s, aes(x = Date, y = Value), color = "red") +
+  geom_line(data = test_data_df_s, aes(x = Date, y = Value), color = "blue") +
+  geom_line(data = forecast_data_df_s_full, aes(x = Date, y = Value), color = "purple") +
+  theme_minimal() +
+  labs(title = "South Geomagnetic intensities Forecast", x = "Time", y = "magnetic intensities") +
+  scale_x_continuous(labels = year_label,
+                     breaks = seq(0, 2033 - 1590, by = 15),  
+                     limits = c(0, 2033 - 1590)) +  
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p_s_full
+
+
+```
+
